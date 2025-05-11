@@ -3,6 +3,7 @@ import numpy as np
 import logging
 import os
 import asyncio
+import warnings
 from typing import Dict, Any
 from transformers import BertTokenizer, BertModel
 import torch
@@ -10,6 +11,11 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import umap.umap_ as umap
 import hdbscan
+
+# Фильтрация предупреждений
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Настройка логирования
 logging.basicConfig(
@@ -22,12 +28,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def setup_environment():
-    """Инициализация окружения"""
+    """Инициализация окружения и проверка CUDA"""
     logger.info(f"PyTorch version: {torch.__version__}")
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+
     if torch.cuda.is_available():
+        logger.info(f"CUDA available: True")
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+        logger.info(f"CUDA version: {torch.version.cuda}")
+        torch.backends.cudnn.benchmark = True
+    else:
+        logger.info("CUDA available: False (работаем на CPU)")
+
 
 async def load_excel(file_path: str) -> pd.DataFrame:
     """Загрузка и подготовка данных"""
@@ -35,7 +48,7 @@ async def load_excel(file_path: str) -> pd.DataFrame:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл {file_path} не найден!")
 
-        df = pd.read_excel(file_path, engine='openpyxl')  # Явное указание движка
+        df = pd.read_excel(file_path, engine='openpyxl')
         logger.info(f"Загружено строк: {len(df)}")
 
         initial_count = len(df)
@@ -47,20 +60,23 @@ async def load_excel(file_path: str) -> pd.DataFrame:
         logger.error(f"Ошибка загрузки: {str(e)}")
         raise
 
+
 async def get_bert_embeddings(texts: list) -> np.ndarray:
-    """Генерация эмбеддингов"""
+    """Генерация эмбеддингов с использованием GPU"""
     try:
-        tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-        model = BertModel.from_pretrained('bert-base-multilingual-cased')
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = model.to(device)
+        logger.info(f"Используемое устройство: {device}")
+
+        tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
+        model = BertModel.from_pretrained('bert-base-multilingual-cased').to(device)
+        model.eval()
 
         embeddings = []
-        batch_size = 128
+        batch_size = 256 if torch.cuda.is_available() else 128
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
-            logger.info(f"Processing batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+            logger.info(f"Обработка батча {i // batch_size + 1}/{(len(texts) - 1) // batch_size + 1}")
 
             encoded = tokenizer(
                 batch,
@@ -70,7 +86,7 @@ async def get_bert_embeddings(texts: list) -> np.ndarray:
                 return_tensors='pt'
             ).to(device)
 
-            with torch.no_grad():
+            with torch.no_grad(), torch.cuda.amp.autocast():
                 outputs = model(**encoded)
                 batch_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
                 embeddings.append(batch_embeddings)
@@ -82,21 +98,32 @@ async def get_bert_embeddings(texts: list) -> np.ndarray:
         logger.error(f"Ошибка генерации эмбеддингов: {str(e)}")
         raise
 
+
 def cluster_data(embeddings: np.ndarray, method: str, params: dict) -> np.ndarray:
-    """Выполнение кластеризации"""
+    """Оптимизированная кластеризация"""
     try:
         scaler = StandardScaler()
         scaled = scaler.fit_transform(embeddings)
 
         if method == 'kmeans':
-            model = KMeans(n_clusters=params['n_clusters'], random_state=42)
+            model = KMeans(
+                n_clusters=params['n_clusters'],
+                random_state=42,
+                n_init='auto'
+            )
         elif method == 'hdbscan':
-            reducer = umap.UMAP(n_components=params['umap_components'], random_state=42)
+            reducer = umap.UMAP(
+                n_components=params['umap_components'],
+                random_state=42,
+                n_jobs=-1
+            )
             reduced = reducer.fit_transform(scaled)
+
             model = hdbscan.HDBSCAN(
                 min_cluster_size=params['min_cluster_size'],
                 cluster_selection_epsilon=params['epsilon'],
-                min_samples=params['min_samples']
+                min_samples=params['min_samples'],
+                core_dist_n_jobs=-1
             )
             scaled = reduced
 
@@ -105,8 +132,9 @@ def cluster_data(embeddings: np.ndarray, method: str, params: dict) -> np.ndarra
         logger.error(f"Ошибка кластеризации: {str(e)}")
         raise
 
+
 async def main(config: dict):
-    """Основной поток выполнения"""
+    """Основной процесс выполнения"""
     try:
         setup_environment()
 
@@ -116,6 +144,7 @@ async def main(config: dict):
 
         logger.info("Генерация BERT-эмбеддингов...")
         embeddings = await get_bert_embeddings(texts)
+        logger.info(f"Размерность эмбеддингов: {embeddings.shape}")
 
         logger.info("Запуск кластеризации...")
         clusters = cluster_data(embeddings, config['method'], config)
@@ -133,31 +162,28 @@ async def main(config: dict):
 
             summary.to_excel(writer, sheet_name='Статистика', index=False)
 
-        logger.info(f"Процесс завершен успешно! Результаты сохранены в {output_file}")
-
-        # Вывод информации о созданных файлах
-        logger.info("\nСозданные файлы:")
-        for fname in ['results.xlsx', 'clustering.log']:
-            if os.path.exists(fname):
-                size = os.path.getsize(fname)
-                logger.info(f"- {fname} ({size/1024:.1f} KB)")
+        logger.info(f"Результаты сохранены в {output_file}")
+        logger.info("Процесс успешно завершен!")
 
     except Exception as e:
         logger.error(f"Критическая ошибка: {str(e)}")
         raise
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 
 # Конфигурация
 config = {
-    'input': 'keywords.xlsx', # Путь к файлу относительно рабочей директории
-    'method': 'hdbscan', # 'hdbscan' или 'kmeans'
+    'input': 'keywords.xlsx',
+    'method': 'hdbscan',
     'min_cluster_size': 5,
     'epsilon': 0.3,
     'min_samples': 5,
-    'n_clusters': 25, # Только для KMeans
+    'n_clusters': 25,
     'umap_components': 5
 }
 
-# Запуск приложения
 if __name__ == "__main__":
     try:
         asyncio.run(main(config))
