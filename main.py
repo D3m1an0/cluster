@@ -175,12 +175,12 @@ async def main(config: dict):
 
 # Конфигурация
 config = {
-    'input': 'keywords.xlsx',
-    'method': 'hdbscan',
-    'min_cluster_size': 5,
-    'epsilon': 0.3,
-    'min_samples': 5,
-    'n_clusters': 25,
+    'input': 'keywords.xlsx', 
+    'method': 'hdbscan', # Выбор алгоритма или 'hdbscan' или 'kmeans'
+    'min_cluster_size': 5, # Минимальный размер кластера
+    'epsilon': 0.3, # Чувствительность к плотности
+    'min_samples': 5, # Устойчивость к шуму
+    'n_clusters': 25,  # Только для KMeans
     'umap_components': 5
 }
 
