@@ -35,7 +35,7 @@ async def load_excel(file_path: str) -> pd.DataFrame:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл {file_path} не найден!")
 
-        df = pd.read_excel(file_path)
+        df = pd.read_excel(file_path, engine='openpyxl')  # Явное указание движка
         logger.info(f"Загружено строк: {len(df)}")
 
         initial_count = len(df)
@@ -127,7 +127,7 @@ async def main(config: dict):
 
             summary = df.groupby('cluster').agg(
                 Ключевые_слова=('keyword', 'count'),
-                Топ_ключей=('keyword', lambda x: ', '.join(x.head(5))),
+                Топ_ключей=('keyword', lambda x: ', '.join(map(str, x.head(5)))),
                 Общая_частотность=('frequency', 'sum')
             ).reset_index()
 
@@ -148,16 +148,16 @@ async def main(config: dict):
 
 # Конфигурация
 config = {
-    'input': 'keywords.xlsx',  # Путь к файлу относительно рабочей директории
-    'method': 'hdbscan',       # 'hdbscan' или 'kmeans'
+    'input': 'keywords.xlsx', # Путь к файлу относительно рабочей директории
+    'method': 'hdbscan', # 'hdbscan' или 'kmeans'
     'min_cluster_size': 5,
     'epsilon': 0.3,
     'min_samples': 5,
-    'n_clusters': 25,          # Только для KMeans
+    'n_clusters': 25, # Только для KMeans
     'umap_components': 5
 }
 
-# Запуск асинхронного приложения
+# Запуск приложения
 if __name__ == "__main__":
     try:
         asyncio.run(main(config))
