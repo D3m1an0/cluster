@@ -1,17 +1,17 @@
 # Основные зависимости
-pandas>=1.3.0
-numpy>=1.21.0
-scikit-learn>=1.0.0
-xlsxwriter>=3.0.0
-openpyxl>=3.0.0  # Добавлено для работы с Excel файлами
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+xlsxwriter>=3.1.0
+openpyxl>=3.1.0
 
 # Обработка естественного языка
-transformers>=4.20.0
-sentence-transformers>=2.2.0
+transformers>=4.30.0
+sentence-transformers>=2.2.2
 
-# Нейронные сети (выберите подходящую версию PyTorch)
-torch>=1.12.0
+# Нейронные сети
+torch>=2.0.0
 
 # Визуализация и кластеризация
-umap-learn>=0.5.0
-hdbscan>=0.8.28
+umap-learn>=0.5.4
+hdbscan>=0.8.33
